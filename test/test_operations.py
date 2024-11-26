@@ -20,10 +20,8 @@ import collections
 import copy
 import itertools
 import math
-from numbers import Number
 from functools import reduce
-import numpy
-import random
+import numpy as np
 import re
 import torch
 import torch.autograd as ad
@@ -2631,6 +2629,75 @@ class RegisterXLAKeyTest(test_utils.XlaTestCase):
     os.environ.get('XLA_USE_EAGER_DEBUG_MODE'),
     "Skipping test under XLA_USE_EAGER_DEBUG_MODE because `result` will not \
       reference a graph due to eager evaluation.")
+class TestLoweringContextSPMD(test_utils.XlaTestCase):
+  def _get_computation_hlo_txt(self, ctx):
+      hlo = ctx.hlo()
+      comp = xb.computation_from_module_proto("my_custom_comp", hlo)
+      return xb.get_computation_hlo(comp)
+
+  def setUp(self):
+    xr.use_spmd()
+    super().setUp()
+    num_devices = xr.global_runtime_device_count()
+    device_ids = np.arange(num_devices)
+    # Annotate a simple sharding for the test.
+    self.model_axis = min(8, num_devices)
+    self.data_axis = num_devices // self.model_axis
+    mesh_shape = (self.data_axis, self.model_axis)
+    self.spmd_mesh = xs.Mesh(device_ids, mesh_shape, ('x', 'y'))
+    xs.set_global_mesh(self.spmd_mesh)
+
+  def test_basic(self):
+    device = xm.xla_device()
+    a = torch.ones(2048, requires_grad=True).to(device)
+    xs.mark_sharding(a, self.spmd_mesh, ('x',))
+    b = torch.randn([32, 2048], requires_grad=True).to(device)
+    xs.mark_sharding(b, self.spmd_mesh, (None, 'y'))
+
+    def fn(x, y):
+      x = x + 1
+      return x, y * 2
+
+    result = fn(a, b)
+
+    ctx = torch_xla._XLAC.lowering.LoweringContext("MyCustomName")
+    ctx.build(list(result))
+    torch_xla.sync()
+
+    # Sanity HLO check.
+    hlo_text = ctx.hlo_text()
+    self.assertIn('MyCustomName', hlo_text)
+    self.assertIn('opcode: "parameter"', hlo_text)
+    self.assertIn('opcode: "add"', hlo_text)
+    self.assertIn('sharding', hlo_text)
+
+    # Ensure that the corresponding input parameters contain the expected sharding.
+    hlo_comp_txt = self._get_computation_hlo_txt(ctx)
+    a_sharding_spec = torch_xla._XLAC._get_xla_sharding_spec(a)
+    self.assertRegex(
+      hlo_comp_txt,
+      rf'%p\d+\.\d+.*f32[2048]{{0}}.*sharding={re.escape(a_sharding_spec)}'
+    )
+    b_sharding_spec = torch_xla._XLAC._get_xla_sharding_spec(b)
+    self.assertRegex(
+      hlo_comp_txt,
+      rf'%p\d+\.\d+.*f32[32,2048]{{0}}.*sharding={re.escape(b_sharding_spec)}'
+    )
+
+    # Ensure that the results retain the same sharding specs.
+    result_a, result_b = result
+    self.assertEqual(
+      torch_xla._XLAC._get_xla_sharding_spec(result_a), a_sharding_spec
+    )
+    self.assertEqual(
+      torch_xla._XLAC._get_xla_sharding_spec(result_b), b_sharding_spec
+    )
+
+
+@unittest.skipIf(
+    os.environ.get('XLA_USE_EAGER_DEBUG_MODE'),
+    "Skipping test under XLA_USE_EAGER_DEBUG_MODE because `result` will not \
+      reference a graph due to eager evaluation.")
 class TestLoweringContext(test_utils.XlaTestCase):
 
   def test_api(self):
@@ -2642,11 +2709,9 @@ class TestLoweringContext(test_utils.XlaTestCase):
 
     ctx = torch_xla._XLAC.lowering.LoweringContext("MyCustomName")
     ctx.build([result])
-    hlo = ctx.hlo()
     hlo_text = ctx.hlo_text()
     self.assertIn('MyCustomName', hlo_text)
-    self.assertIn('opcode: "parameter"', hlo_text)
-    self.assertIn('opcode: "parameter"', hlo_text)
+    self.assertTrue(hlo_text.count('opcode: "parameter"'), 2)
     self.assertIn('opcode: "add"', hlo_text)
     mapping = ctx.parameter_id_tensor_mapping()
     self.assertEqual(len(mapping), 2)
