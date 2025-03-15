@@ -1,29 +1,29 @@
-import collections
-from collections.abc import Generator, MutableMapping
-import math
+from collections.abc import Generator, MutableMapping, Sequence
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
+from enum import IntEnum
+from typing import Any, List, Optional, Set, Tuple, TypeVar, Union
+
+import functools
+import itertools
+import math
+import numpy as np
+import os
+
 import torch
 from torch import Tensor
+from torch.amp import custom_fwd, custom_bwd
 from torch.library import custom_op
+from torch.utils._pytree import tree_flatten, tree_unflatten
+
 import torch_xla
 import torch_xla.core.xla_builder as xb
 import torch_xla.core.xla_model as xm
 import torch_xla._internal.utils as _utils
-from torch_xla.distributed.spmd import XLAShardedTensor, XLAShard
-import torch_xla.runtime as xr
 import torch_xla.debug.profiler as xp
+import torch_xla.runtime as xr
+from torch_xla.distributed.spmd import XLAShardedTensor, XLAShard
 from torch_xla._internal.jax_workarounds import requires_jax, maybe_get_torchax
-
-import numpy as np
-import functools
-import itertools
-from typing import TypeVar, Union, Any, Optional
-from collections.abc import Sequence
-from enum import IntEnum
-
-from torch.amp import custom_fwd, custom_bwd
-from torch.utils._pytree import tree_flatten, tree_unflatten
 
 PartitionSpec = tuple[Union[tuple[Union[int, str], ...], int, str, None], ...]
 """PartitionSpec describes the sharding of a tensor.
@@ -170,6 +170,7 @@ class Mesh:
   def from_str(cls, mesh_str: str) -> Optional["Mesh"]:
     """Create Mesh from string representation."""
     import ast
+
     import numpy as np
     try:
       dict_str = mesh_str.replace('Mesh', '')
@@ -430,6 +431,20 @@ def _get_sharding_type(partition_spec: PartitionSpec,
   return sharding_type
 
 
+def _normalize_logical_mesh(device_mesh: np.ndarray) -> np.ndarray:
+  """
+  Normalize the device mesh to start from 0.
+  
+  This is needed when mesh doesn't include all global devices
+  (e.g. In multi-host setup, each host has a mesh containing local devices).
+  Because HLO graph always use logical device ids in the sharding annotation,
+  we need to normalize the physical device ids to generate the correct HLO
+  sharding annotation.
+  """
+  device_id_min = np.min(device_mesh)
+  return device_mesh.copy() - device_id_min
+
+
 def _get_tile_assignment(mesh: Mesh,
                          partition_spec: PartitionSpec) -> np.ndarray:
   """
@@ -445,8 +460,8 @@ def _get_tile_assignment(mesh: Mesh,
   tiled_dims = [x for x in partition_spec if x is not None]
   permutation = np.hstack(tiled_dims).tolist() if tiled_dims else []
   missing_axes = sorted(set(range(len(mesh.shape()))) - set(permutation))
-  tile_assignment = mesh.get_logical_mesh().transpose(permutation +
-                                                      missing_axes)
+  tile_assignment = _normalize_logical_mesh(
+      mesh.get_logical_mesh()).transpose(permutation + missing_axes)
 
   # For any tuples in the partition_spec, the grouped axes will be adjacent
   # after the permutation. Combine these dimensions into a single axis.
@@ -600,6 +615,11 @@ def mark_sharding(t: Union[torch.Tensor, XLAShardedTensor], mesh: Mesh,
       >>> linear = nn.Linear(32, 10).to(xm.xla_device())
       >>> xs.mark_sharding(linear.weight, mesh, (None, 1)) # 2-way model parallel
   """
+  num_devices = xr.global_runtime_device_count()
+  num_local_devices = xr.addressable_runtime_device_count()
+  assert num_devices > 0, "This requires XLA supported device(s)."
+  assert mesh.size() == num_devices or mesh.size() == num_local_devices, \
+    f"{mesh.mesh_shape} is not mappable over {num_devices} devices."
   # We only allow fully specified `partition_spec` to be applicable, as opposed
   # to filling in the unspecified replicated dims. Fully specified `partition_spec`
   # should be of the same rank as `t`. This is to support partial replication
