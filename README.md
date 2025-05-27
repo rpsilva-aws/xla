@@ -1,3 +1,21 @@
+# Pipeline Parallelism Fork
+
+## Development setup:
+```
+git clone git@github.com:rpsilva-aws/torch-xla-pipeline-parallelism.git xla
+
+# Add the upstream remote to the original repository, so that the latest
+# changes can be ported.
+git remote add upstream git@github.com:pytorch/xla.git
+git remote set-url --push upstream DISABLE
+
+# For pushing changes, use the `origin`
+# You can fetch or rebase from upstream, and most likely we will have
+# a diverging branch on the original repo.
+git fetch upstream
+git rebase upstream/{branch}
+```
+
 # PyTorch/XLA
 
 <b>Current CI status:</b>  ![GitHub Actions
