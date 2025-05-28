@@ -9,8 +9,6 @@ from torch._C._distributed_c10d import ProcessGroup
 
 
 def _create_xla_process_group(prefix_store, rank, size, timeout):
-  assert not xr.is_spmd(
-  ), "XLA backend is not supported with SPMD. Please use a CPU process group instead."
   return ProcessGroupXla(prefix_store, rank, size, timeout)
 
 
