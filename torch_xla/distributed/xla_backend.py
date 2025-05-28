@@ -237,7 +237,7 @@ class ProcessGroupXla(ProcessGroup):
   # the maker with their specific one. See unit test in
   # test/test_torch_distributed_xla_backend.py for an example.
   def make_send_channel_id(self, dst_rank, tag):
-    raise NotImplementedError
+    return dst_rank + tag
 
   # Call site e.g.
   # https://github.com/pytorch/pytorch/blob/release/1.10/torch/distributed/distributed_c10d.py#L877
@@ -258,7 +258,7 @@ class ProcessGroupXla(ProcessGroup):
   # the maker with their specific one. See unit test in
   # test/test_torch_distributed_xla_backend.py for an example.
   def make_recv_channel_id(self, src_rank, tag):
-    raise NotImplementedError
+    return src_rank + tag
 
   # Call site e.g.
   # https://github.com/pytorch/pytorch/blob/release/1.10/torch/distributed/distributed_c10d.py#L913
