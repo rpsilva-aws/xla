@@ -244,14 +244,22 @@ class ProcessGroupXla(ProcessGroup):
   def send(self, tensors, dst_rank, tag=0):
     results = []
     for t in tensors:
-      channel_id = self.make_send_channel_id(dst_rank, tag)
-      # The input will be returned as result.
-      input_as_result = xm.send(t, channel_id)
-      # Make the sent tensor depend on the token, such that the `send`
-      # op can actually be built into the computation graph.
+
+      result_t = xm.collective_permute(
+          t, pairs=[[xr.process_index(), dst_rank]])
       with torch.no_grad():
-        t.copy_(input_as_result)
-      results.append(input_as_result)
+        t.copy_(result_t * 0.0 + t * 1.0)
+      results.append(result_t)
+
+      # channel_id = self.make_send_channel_id(dst_rank, tag)
+      # # The input will be returned as result.
+      # input_as_result = xm.send(t, channel_id)
+      # # Make the sent tensor depend on the token, such that the `send`
+      # # op can actually be built into the computation graph.
+      # with torch.no_grad():
+      #   t.copy_(input_as_result)
+      # results.append(input_as_result)
+
     return _ret_work(results)
 
   # Dummy channel id maker. Different backend (TPU, GPU, etc) should replace
@@ -265,9 +273,17 @@ class ProcessGroupXla(ProcessGroup):
   def recv(self, out_tensors, src_rank, tag=0):
     results = []
     for ot in out_tensors:
-      channel_id = self.make_recv_channel_id(src_rank, tag)
-      result = xm.recv(ot, channel_id)
-      results.append(result)
+
+      result_t = xm.collective_permute(
+          ot, pairs=[[src_rank, xr.process_index()]])
+      with torch.no_grad():
+        ot.copy_(result_t * 1.0 + ot * 0.0)	
+      results.append(result_t)
+
+      # channel_id = self.make_recv_channel_id(src_rank, tag)
+      # result = xm.recv(ot, channel_id)
+      # results.append(result)
+
     return _ret_work(results)
 
   def recv_anysource(self, *args):
