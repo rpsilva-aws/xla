@@ -83,7 +83,7 @@ std::unordered_map<int, int> build_index_map(
     //    Example: In multi-host v6e-8, each host has a mesh of its local
     //             devices, host 1 has devices TPU:{4, 5, 6, 7}. In this case
     //             the global ordinal of TPU:4 is 0, TPU:5 is 1, and so on.
-                    
+
     int global_ordinal =
         ParseDeviceString(devices[i]).ordinal() % num_mesh_devices;
     device_index[global_ordinal] = i;

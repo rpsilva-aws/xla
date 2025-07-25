@@ -1468,6 +1468,8 @@ void InitXlaModuleBindings(py::module m) {
         static_cast<XlaDeviceType>(xtensor->GetDevice().type());
     return DeviceType(xla_device_type).toString();
   });
+  m.def("_xla_get_platform_version",
+        []() { return runtime::GetComputationClient()->GetPlatformVersion(); });
   m.def("_xla_get_devices", []() {
     if (UseVirtualDevice()) {
       // Under SPMD context, there is only one virtual devices from user

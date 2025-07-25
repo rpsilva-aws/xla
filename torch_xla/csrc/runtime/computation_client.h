@@ -378,6 +378,8 @@ class ComputationClient {
 
   virtual size_t GetNumGlobalDevices() const = 0;
 
+  virtual std::string GetPlatformVersion() const = 0;
+
   virtual std::vector<std::string> GetLocalDevices() const = 0;
 
   virtual std::vector<std::string> GetAllDevices() const = 0;
